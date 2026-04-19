@@ -1,3 +1,18 @@
+-- Ensure dependencies exist for legacy references
+CREATE TABLE IF NOT EXISTS rate_cards (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    advocate_id UUID REFERENCES advocates(id) ON DELETE CASCADE,
+    name TEXT,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+);
+
+ALTER TABLE proforma_requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE matters ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 -- Extend proforma_requests table
 ALTER TABLE proforma_requests 
 ADD COLUMN IF NOT EXISTS client_response_status TEXT DEFAULT 'pending' CHECK (client_response_status IN ('pending', 'accepted', 'negotiating', 'rejected')),
@@ -106,11 +121,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_matter_actual_total_on_time_entry ON time_entries;
 CREATE TRIGGER update_matter_actual_total_on_time_entry
     AFTER INSERT OR UPDATE OR DELETE ON time_entries
     FOR EACH ROW
     EXECUTE FUNCTION update_matter_actual_total();
 
+DROP TRIGGER IF EXISTS update_matter_actual_total_on_expense ON expenses;
 CREATE TRIGGER update_matter_actual_total_on_expense
     AFTER INSERT OR UPDATE OR DELETE ON expenses
     FOR EACH ROW
@@ -152,6 +169,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS check_matter_cost_variance ON matters;
 CREATE TRIGGER check_matter_cost_variance
     AFTER UPDATE OF actual_total ON matters
     FOR EACH ROW

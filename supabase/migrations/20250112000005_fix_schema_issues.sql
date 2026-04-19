@@ -9,8 +9,25 @@
 
 -- Add cost_variance_percentage as an alias/view for variance_percentage
 ALTER TABLE scope_amendments 
-ADD COLUMN IF NOT EXISTS cost_variance_percentage DECIMAL(5,2) 
-GENERATED ALWAYS AS (variance_percentage) STORED;
+ADD COLUMN IF NOT EXISTS cost_variance_percentage DECIMAL(5,2);
+
+DO $$
+DECLARE
+    col_generated TEXT;
+BEGIN
+    SELECT is_generated
+    INTO col_generated
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'scope_amendments'
+      AND column_name = 'cost_variance_percentage';
+
+    IF col_generated IS DISTINCT FROM 'ALWAYS' THEN
+        UPDATE scope_amendments
+        SET cost_variance_percentage = variance_percentage
+        WHERE cost_variance_percentage IS DISTINCT FROM variance_percentage;
+    END IF;
+END $$;
 
 COMMENT ON COLUMN scope_amendments.cost_variance_percentage IS 'Alias for variance_percentage to match frontend expectations';
 
@@ -20,8 +37,25 @@ COMMENT ON COLUMN scope_amendments.cost_variance_percentage IS 'Alias for varian
 
 -- Add uploaded_at as an alias for created_at
 ALTER TABLE document_uploads 
-ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ 
-GENERATED ALWAYS AS (created_at) STORED;
+ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ;
+
+DO $$
+DECLARE
+    col_generated TEXT;
+BEGIN
+    SELECT is_generated
+    INTO col_generated
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'document_uploads'
+      AND column_name = 'uploaded_at';
+
+    IF col_generated IS DISTINCT FROM 'ALWAYS' THEN
+        UPDATE document_uploads
+        SET uploaded_at = created_at
+        WHERE uploaded_at IS DISTINCT FROM created_at;
+    END IF;
+END $$;
 
 COMMENT ON COLUMN document_uploads.uploaded_at IS 'Alias for created_at to match frontend expectations';
 
@@ -44,8 +78,6 @@ CREATE POLICY "scope_amendments_select_policy" ON scope_amendments
             SELECT id FROM advocates WHERE id = advocate_id
             UNION
             SELECT advocate_id FROM matters WHERE id = matter_id
-            UNION
-            SELECT partner_id FROM matters WHERE id = matter_id
         )
     );
 
@@ -64,8 +96,6 @@ CREATE POLICY "scope_amendments_update_policy" ON scope_amendments
             SELECT id FROM advocates WHERE id = advocate_id
             UNION
             SELECT advocate_id FROM matters WHERE id = matter_id
-            UNION
-            SELECT partner_id FROM matters WHERE id = matter_id
         )
     );
 
@@ -88,8 +118,6 @@ CREATE POLICY "document_uploads_select_policy" ON document_uploads
             SELECT uploaded_by WHERE uploaded_by IS NOT NULL
             UNION
             SELECT advocate_id FROM matters WHERE id = matter_id
-            UNION
-            SELECT partner_id FROM matters WHERE id = matter_id
         )
     );
 
@@ -106,8 +134,6 @@ CREATE POLICY "document_uploads_update_policy" ON document_uploads
         auth.uid() = uploaded_by OR
         auth.uid() IN (
             SELECT advocate_id FROM matters WHERE id = matter_id
-            UNION
-            SELECT partner_id FROM matters WHERE id = matter_id
         )
     );
 

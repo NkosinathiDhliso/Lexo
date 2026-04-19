@@ -1,6 +1,40 @@
 -- Performance Optimizations for Search, Dashboard, and Reports
 -- Adds indexes, materialized views, and caching strategies
 
+ALTER TABLE time_entries
+ADD COLUMN IF NOT EXISTS billable BOOLEAN DEFAULT true;
+
+ALTER TABLE matters
+ADD COLUMN IF NOT EXISTS deadline DATE;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'matters'
+      AND column_name = 'deadline_date'
+  ) THEN
+    UPDATE matters
+    SET deadline = deadline_date
+    WHERE deadline IS NULL
+      AND deadline_date IS NOT NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'disbursements'
+  ) THEN
+    ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS incurred_date DATE;
+    UPDATE disbursements
+    SET incurred_date = date_incurred
+    WHERE incurred_date IS NULL;
+  END IF;
+END $$;
+
 -- ============================================================================
 -- FULL-TEXT SEARCH OPTIMIZATION
 -- ============================================================================
@@ -55,7 +89,7 @@ ON matters USING gin(search_vector);
 -- Composite index for active matters (most common query)
 CREATE INDEX IF NOT EXISTS idx_matters_active_advocate 
 ON matters(advocate_id, created_at DESC)
-WHERE status IN ('active', 'new_request', 'awaiting_approval')
+WHERE status IN ('active', 'new_request')
 AND archived_at IS NULL;
 
 -- Index for archived matters search
@@ -76,7 +110,7 @@ WHERE archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_matters_deadline 
 ON matters(advocate_id, deadline)
 WHERE deadline IS NOT NULL
-AND status IN ('active', 'new_request', 'awaiting_approval')
+AND status IN ('active', 'new_request')
 AND archived_at IS NULL;
 
 -- Index for firm-based queries
@@ -91,7 +125,7 @@ WHERE archived_at IS NULL;
 -- Index for outstanding invoices (critical for dashboard)
 CREATE INDEX IF NOT EXISTS idx_invoices_outstanding 
 ON invoices(advocate_id, status, created_at DESC)
-WHERE status IN ('sent', 'partially_paid', 'overdue');
+WHERE status IN ('sent', 'overdue');
 
 -- Index for payment tracking
 CREATE INDEX IF NOT EXISTS idx_payments_invoice 
@@ -104,7 +138,7 @@ ON payments(advocate_id, payment_date DESC);
 -- Composite index for revenue calculations
 CREATE INDEX IF NOT EXISTS idx_invoices_revenue 
 ON invoices(advocate_id, status, invoice_date)
-WHERE status IN ('paid', 'partially_paid');
+WHERE status IN ('paid', 'sent', 'overdue');
 
 -- ============================================================================
 -- WIP (WORK IN PROGRESS) INDEXES
@@ -139,18 +173,18 @@ SELECT
   -- Urgent attention metrics
   COUNT(DISTINCT CASE 
     WHEN m.deadline = CURRENT_DATE 
-    AND m.status IN ('active', 'new_request') 
+    AND m.status::text IN ('active', 'new_request') 
     THEN m.id 
   END) as deadlines_today,
   
   COUNT(DISTINCT CASE 
-    WHEN i.status IN ('sent', 'partially_paid') 
+    WHEN i.status::text IN ('sent', 'partially_paid') 
     AND i.invoice_date < CURRENT_DATE - INTERVAL '45 days'
     THEN i.id 
   END) as overdue_45_days,
   
   COUNT(DISTINCT CASE 
-    WHEN m.status = 'awaiting_approval' 
+    WHEN m.status::text = 'awaiting_approval' 
     AND m.created_at < CURRENT_DATE - INTERVAL '5 days'
     THEN m.id 
   END) as pending_proformas_5_days,
@@ -158,24 +192,24 @@ SELECT
   -- This week's deadlines
   COUNT(DISTINCT CASE 
     WHEN m.deadline BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
-    AND m.status IN ('active', 'new_request')
+    AND m.status::text IN ('active', 'new_request')
     THEN m.id 
   END) as deadlines_this_week,
   
   -- Financial snapshot
   COALESCE(SUM(CASE 
-    WHEN i.status IN ('sent', 'partially_paid', 'overdue')
+    WHEN i.status::text IN ('sent', 'partially_paid', 'overdue')
     THEN i.total_amount - COALESCE(i.amount_paid, 0)
   END), 0) as outstanding_fees,
   
   COUNT(DISTINCT CASE 
-    WHEN i.status IN ('sent', 'partially_paid', 'overdue')
+    WHEN i.status::text IN ('sent', 'partially_paid', 'overdue')
     THEN i.id 
   END) as outstanding_invoices_count,
   
   -- WIP metrics
   COUNT(DISTINCT CASE 
-    WHEN m.status = 'active' 
+    WHEN m.status::text = 'active' 
     AND EXISTS (
       SELECT 1 FROM time_entries te 
       WHERE te.matter_id = m.id 
@@ -197,19 +231,19 @@ SELECT
   
   -- Active matters count
   COUNT(DISTINCT CASE 
-    WHEN m.status = 'active' 
+    WHEN m.status::text = 'active' 
     AND m.archived_at IS NULL
     THEN m.id 
   END) as active_matters_count,
   
   -- Pending actions
   COUNT(DISTINCT CASE 
-    WHEN m.status = 'new_request'
+    WHEN m.status::text = 'new_request'
     THEN m.id 
   END) as new_requests_count,
   
   COUNT(DISTINCT CASE 
-    WHEN m.status = 'awaiting_approval'
+    WHEN m.status::text = 'awaiting_approval'
     THEN m.id 
   END) as awaiting_approval_count,
   
@@ -234,35 +268,7 @@ RETURNS VOID
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF p_advocate_id IS NULL THEN
-    -- Refresh entire cache
-    REFRESH MATERIALIZED VIEW CONCURRENTLY dashboard_metrics_cache;
-  ELSE
-    -- Refresh specific advocate (delete and recompute)
-    DELETE FROM dashboard_metrics_cache WHERE advocate_id = p_advocate_id;
-    
-    INSERT INTO dashboard_metrics_cache
-    SELECT 
-      m.advocate_id,
-      COUNT(DISTINCT CASE WHEN m.deadline = CURRENT_DATE AND m.status IN ('active', 'new_request') THEN m.id END) as deadlines_today,
-      COUNT(DISTINCT CASE WHEN i.status IN ('sent', 'partially_paid') AND i.invoice_date < CURRENT_DATE - INTERVAL '45 days' THEN i.id END) as overdue_45_days,
-      COUNT(DISTINCT CASE WHEN m.status = 'awaiting_approval' AND m.created_at < CURRENT_DATE - INTERVAL '5 days' THEN m.id END) as pending_proformas_5_days,
-      COUNT(DISTINCT CASE WHEN m.deadline BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days' AND m.status IN ('active', 'new_request') THEN m.id END) as deadlines_this_week,
-      COALESCE(SUM(CASE WHEN i.status IN ('sent', 'partially_paid', 'overdue') THEN i.total_amount - COALESCE(i.amount_paid, 0) END), 0) as outstanding_fees,
-      COUNT(DISTINCT CASE WHEN i.status IN ('sent', 'partially_paid', 'overdue') THEN i.id END) as outstanding_invoices_count,
-      COUNT(DISTINCT CASE WHEN m.status = 'active' AND EXISTS (SELECT 1 FROM time_entries te WHERE te.matter_id = m.id AND te.invoice_id IS NULL) THEN m.id END) as matters_in_wip,
-      COALESCE(SUM(CASE WHEN i.invoice_date >= DATE_TRUNC('month', CURRENT_DATE) THEN i.total_amount END), 0) as invoiced_this_month,
-      COUNT(DISTINCT CASE WHEN i.invoice_date >= DATE_TRUNC('month', CURRENT_DATE) THEN i.id END) as invoices_this_month_count,
-      COUNT(DISTINCT CASE WHEN m.status = 'active' AND m.archived_at IS NULL THEN m.id END) as active_matters_count,
-      COUNT(DISTINCT CASE WHEN m.status = 'new_request' THEN m.id END) as new_requests_count,
-      COUNT(DISTINCT CASE WHEN m.status = 'awaiting_approval' THEN m.id END) as awaiting_approval_count,
-      NOW() as cached_at
-    FROM matters m
-    LEFT JOIN invoices i ON i.matter_id = m.id
-    WHERE m.advocate_id = p_advocate_id
-    AND m.archived_at IS NULL
-    GROUP BY m.advocate_id;
-  END IF;
+  REFRESH MATERIALIZED VIEW dashboard_metrics_cache;
 END;
 $$;
 
@@ -354,7 +360,7 @@ DECLARE
   v_total NUMERIC;
 BEGIN
   -- Calculate unbilled time entries value
-  SELECT COALESCE(SUM(hours * rate), 0)
+  SELECT COALESCE(SUM(hours * hourly_rate), 0)
   INTO v_time_value
   FROM time_entries
   WHERE matter_id = p_matter_id
@@ -362,7 +368,7 @@ BEGIN
   AND billable = true;
   
   -- Calculate unbilled disbursements value (including VAT)
-  SELECT COALESCE(SUM(amount + vat_amount), 0)
+  SELECT COALESCE(SUM(total_amount), 0)
   INTO v_disbursements_value
   FROM disbursements
   WHERE matter_id = p_matter_id
@@ -391,14 +397,14 @@ SELECT
   -- Time entries
   COUNT(DISTINCT te.id) as unbilled_time_entries,
   COALESCE(SUM(te.hours), 0) as total_hours,
-  COALESCE(SUM(te.hours * te.rate), 0) as time_value,
+  COALESCE(SUM(te.hours * te.hourly_rate), 0) as time_value,
   
   -- Disbursements
   COUNT(DISTINCT d.id) as unbilled_disbursements,
   COALESCE(SUM(d.amount + d.vat_amount), 0) as disbursements_value,
   
   -- Total WIP
-  COALESCE(SUM(te.hours * te.rate), 0) + COALESCE(SUM(d.amount + d.vat_amount), 0) as total_wip_value,
+  COALESCE(SUM(te.hours * te.hourly_rate), 0) + COALESCE(SUM(d.amount + d.vat_amount), 0) as total_wip_value,
   
   -- Days in WIP
   CURRENT_DATE - m.created_at::DATE as days_in_wip,
@@ -415,7 +421,7 @@ SELECT
 FROM matters m
 LEFT JOIN time_entries te ON te.matter_id = m.id AND te.invoice_id IS NULL AND te.billable = true
 LEFT JOIN disbursements d ON d.matter_id = m.id AND d.invoice_id IS NULL
-WHERE m.status = 'active'
+WHERE m.status::text = 'active'
 AND m.archived_at IS NULL
 AND (te.id IS NOT NULL OR d.id IS NOT NULL)
 GROUP BY m.id, m.advocate_id, m.title, m.client_name, m.practice_area, m.status, m.created_at, m.updated_at;
@@ -467,11 +473,11 @@ COMMENT ON MATERIALIZED VIEW dashboard_metrics_cache IS
 COMMENT ON MATERIALIZED VIEW wip_report_cache IS 
 'Cached WIP report data refreshed every 10 minutes for fast report generation';
 
-COMMENT ON FUNCTION search_matters IS 
+COMMENT ON FUNCTION search_matters(UUID, TEXT, BOOLEAN, INTEGER) IS 
 'Fast full-text search across matters with relevance ranking';
 
-COMMENT ON FUNCTION calculate_matter_wip IS 
+COMMENT ON FUNCTION calculate_matter_wip(UUID) IS 
 'Calculates total WIP value (time + disbursements) for a matter';
 
-COMMENT ON FUNCTION refresh_dashboard_cache IS 
+COMMENT ON FUNCTION refresh_dashboard_cache(UUID) IS 
 'Manually refresh dashboard cache for specific advocate or all advocates';

@@ -26,14 +26,18 @@ CREATE TABLE IF NOT EXISTS attorney_matter_access (
   UNIQUE(attorney_user_id, matter_id)
 );
 
--- 3. Create indexes for efficient queries
-CREATE INDEX idx_invitation_tokens_attorney ON attorney_invitation_tokens(attorney_id);
-CREATE INDEX idx_invitation_tokens_token ON attorney_invitation_tokens(token) WHERE used_at IS NULL;
-CREATE INDEX idx_invitation_tokens_expires ON attorney_invitation_tokens(expires_at) WHERE used_at IS NULL;
+ALTER TABLE matters
+ADD COLUMN IF NOT EXISTS instructing_attorney_id UUID REFERENCES attorneys(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS instructing_attorney_email TEXT;
 
-CREATE INDEX idx_matter_access_attorney ON attorney_matter_access(attorney_user_id);
-CREATE INDEX idx_matter_access_matter ON attorney_matter_access(matter_id);
-CREATE INDEX idx_matter_access_granted ON attorney_matter_access(granted_at);
+-- 3. Create indexes for efficient queries
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_attorney ON attorney_invitation_tokens(attorney_id);
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_token ON attorney_invitation_tokens(token) WHERE used_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_expires ON attorney_invitation_tokens(expires_at) WHERE used_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_matter_access_attorney ON attorney_matter_access(attorney_user_id);
+CREATE INDEX IF NOT EXISTS idx_matter_access_matter ON attorney_matter_access(matter_id);
+CREATE INDEX IF NOT EXISTS idx_matter_access_granted ON attorney_matter_access(granted_at);
 
 -- 4. Create function to validate invitation token
 CREATE OR REPLACE FUNCTION validate_invitation_token(
@@ -145,6 +149,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- 7. Create RLS policies for attorney_invitation_tokens
 ALTER TABLE attorney_invitation_tokens ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS attorney_invitation_tokens_advocate_read ON attorney_invitation_tokens;
+DROP POLICY IF EXISTS attorney_invitation_tokens_advocate_create ON attorney_invitation_tokens;
+
 -- Advocates can see tokens for their own attorneys
 CREATE POLICY attorney_invitation_tokens_advocate_read ON attorney_invitation_tokens
   FOR SELECT
@@ -177,6 +184,10 @@ CREATE POLICY attorney_invitation_tokens_advocate_create ON attorney_invitation_
 
 -- 8. Create RLS policies for attorney_matter_access
 ALTER TABLE attorney_matter_access ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS attorney_matter_access_attorney_read ON attorney_matter_access;
+DROP POLICY IF EXISTS attorney_matter_access_advocate_read ON attorney_matter_access;
+DROP POLICY IF EXISTS attorney_matter_access_advocate_create ON attorney_matter_access;
 
 -- Attorneys can see their own matter access
 CREATE POLICY attorney_matter_access_attorney_read ON attorney_matter_access

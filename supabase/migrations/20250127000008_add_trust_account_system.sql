@@ -34,12 +34,15 @@ CREATE TABLE IF NOT EXISTS trust_accounts (
     deleted_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_trust_accounts_advocate ON trust_accounts(advocate_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_trust_accounts_balance ON trust_accounts(current_balance) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trust_accounts_advocate ON trust_accounts(advocate_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trust_accounts_balance ON trust_accounts(current_balance) WHERE deleted_at IS NULL;
 
 COMMENT ON TABLE trust_accounts IS 'Trust account details for each advocate (LPC compliance)';
 COMMENT ON COLUMN trust_accounts.current_balance IS 'Current balance - must never be negative per LPC rules';
 COMMENT ON COLUMN trust_accounts.lpc_compliant IS 'Indicates if account meets Legal Practice Council requirements';
+
+ALTER TABLE advocates
+ADD COLUMN IF NOT EXISTS full_name TEXT;
 
 -- 7.3: Trust Transfers Table (Requirement 4.5)
 -- For transfers between trust and business accounts
@@ -77,11 +80,11 @@ CREATE TABLE IF NOT EXISTS trust_transfers (
     deleted_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_trust_transfers_trust_account ON trust_transfers(trust_account_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_trust_transfers_advocate ON trust_transfers(advocate_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_trust_transfers_matter ON trust_transfers(matter_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_trust_transfers_date ON trust_transfers(transfer_date) WHERE deleted_at IS NULL;
-CREATE INDEX idx_trust_transfers_type ON trust_transfers(transfer_type) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trust_transfers_trust_account ON trust_transfers(trust_account_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trust_transfers_advocate ON trust_transfers(advocate_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trust_transfers_matter ON trust_transfers(matter_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trust_transfers_date ON trust_transfers(transfer_date) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_trust_transfers_type ON trust_transfers(transfer_type) WHERE deleted_at IS NULL;
 
 COMMENT ON TABLE trust_transfers IS 'Audit trail for transfers between trust and business accounts';
 COMMENT ON COLUMN trust_transfers.authorization_type IS 'Legal basis for the transfer';
@@ -91,10 +94,23 @@ COMMENT ON COLUMN trust_transfers.authorization_type IS 'Legal basis for the tra
 ALTER TABLE trust_transactions
 ADD COLUMN IF NOT EXISTS receipt_number TEXT,
 ADD COLUMN IF NOT EXISTS payment_method TEXT CHECK (payment_method IN ('eft', 'cash', 'cheque', 'card', 'debit_order')),
-ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS trust_account_id UUID REFERENCES trust_accounts(id) ON DELETE CASCADE,
 ADD COLUMN IF NOT EXISTS is_reconciled BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS reconciliation_date DATE;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+            AND table_name = 'clients'
+    ) THEN
+        EXECUTE 'ALTER TABLE trust_transactions ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES clients(id) ON DELETE SET NULL';
+    ELSE
+        EXECUTE 'ALTER TABLE trust_transactions ADD COLUMN IF NOT EXISTS client_id UUID';
+    END IF;
+END $$;
 
 -- Create index for receipt lookup
 CREATE INDEX IF NOT EXISTS idx_trust_transactions_receipt ON trust_transactions(receipt_number) WHERE deleted_at IS NULL;
@@ -122,7 +138,7 @@ BEGIN
     ) VALUES (
         NEW.id,
         'To be configured',
-        NEW.full_name || ' Trust Account',
+        COALESCE(NEW.full_name, 'Advocate') || ' Trust Account',
         'PENDING',
         'trust',
         0.00
@@ -133,6 +149,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS create_trust_account_on_advocate_signup ON advocates;
 CREATE TRIGGER create_trust_account_on_advocate_signup
     AFTER INSERT ON advocates
     FOR EACH ROW
@@ -170,6 +187,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS generate_receipt_number_trigger ON trust_transactions;
 CREATE TRIGGER generate_receipt_number_trigger
     BEFORE INSERT ON trust_transactions
     FOR EACH ROW
@@ -216,6 +234,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_trust_account_balance_trigger ON trust_transactions;
 CREATE TRIGGER update_trust_account_balance_trigger
     AFTER INSERT ON trust_transactions
     FOR EACH ROW
@@ -230,27 +249,32 @@ BEGIN
         NEW.negative_balance_alert_sent := TRUE;
         
         -- Log critical compliance violation
-        INSERT INTO system_notifications (
-            user_id,
-            notification_type,
-            title,
-            message,
-            severity,
-            is_read
-        ) VALUES (
-            NEW.advocate_id,
-            'trust_account_violation',
-            'CRITICAL: Trust Account Negative Balance',
-            'Your trust account has a negative balance of R' || ABS(NEW.current_balance)::TEXT || '. This violates LPC rules. Immediate action required.',
-            'critical',
-            FALSE
-        );
+        IF to_regclass('public.system_notifications') IS NOT NULL THEN
+            EXECUTE '
+                INSERT INTO system_notifications (
+                    user_id,
+                    notification_type,
+                    title,
+                    message,
+                    severity,
+                    is_read
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+            '
+            USING
+                NEW.advocate_id,
+                'trust_account_violation',
+                'CRITICAL: Trust Account Negative Balance',
+                'Your trust account has a negative balance of R' || ABS(NEW.current_balance)::TEXT || '. This violates LPC rules. Immediate action required.',
+                'critical',
+                FALSE;
+        END IF;
     END IF;
     
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS check_negative_balance_trigger ON trust_accounts;
 CREATE TRIGGER check_negative_balance_trigger
     BEFORE UPDATE OF current_balance ON trust_accounts
     FOR EACH ROW
@@ -290,6 +314,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS record_trust_transfer_trigger ON trust_transfers;
 CREATE TRIGGER record_trust_transfer_trigger
     AFTER INSERT ON trust_transfers
     FOR EACH ROW
@@ -304,23 +329,28 @@ ALTER TABLE trust_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trust_transfers ENABLE ROW LEVEL SECURITY;
 
 -- Trust Accounts RLS
+DROP POLICY IF EXISTS "Advocates can view their own trust account" ON trust_accounts;
 CREATE POLICY "Advocates can view their own trust account"
     ON trust_accounts FOR SELECT
     USING (advocate_id = auth.uid());
 
+DROP POLICY IF EXISTS "Advocates can update their own trust account" ON trust_accounts;
 CREATE POLICY "Advocates can update their own trust account"
     ON trust_accounts FOR UPDATE
     USING (advocate_id = auth.uid());
 
+DROP POLICY IF EXISTS "System can create trust accounts" ON trust_accounts;
 CREATE POLICY "System can create trust accounts"
     ON trust_accounts FOR INSERT
     WITH CHECK (true); -- Trigger handles this
 
 -- Trust Transfers RLS
+DROP POLICY IF EXISTS "Advocates can view their own trust transfers" ON trust_transfers;
 CREATE POLICY "Advocates can view their own trust transfers"
     ON trust_transfers FOR SELECT
     USING (advocate_id = auth.uid());
 
+DROP POLICY IF EXISTS "Advocates can create trust transfers" ON trust_transfers;
 CREATE POLICY "Advocates can create trust transfers"
     ON trust_transfers FOR INSERT
     WITH CHECK (advocate_id = auth.uid());
@@ -338,11 +368,21 @@ CREATE POLICY "Advocates can view their own trust transactions"
 -- Triggers for updated_at
 -- =====================================================
 
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_trust_accounts_updated_at ON trust_accounts;
 CREATE TRIGGER update_trust_accounts_updated_at
     BEFORE UPDATE ON trust_accounts
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_trust_transfers_updated_at ON trust_transfers;
 CREATE TRIGGER update_trust_transfers_updated_at
     BEFORE UPDATE ON trust_transfers
     FOR EACH ROW
@@ -364,7 +404,7 @@ INSERT INTO trust_accounts (
 SELECT 
     id,
     'To be configured',
-    full_name || ' Trust Account',
+    COALESCE(full_name, 'Advocate') || ' Trust Account',
     'PENDING',
     'trust',
     0.00

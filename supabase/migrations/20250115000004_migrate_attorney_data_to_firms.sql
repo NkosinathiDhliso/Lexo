@@ -1,6 +1,19 @@
 -- Migrate attorney_users data to firms table
 -- This migration copies existing attorney data to the new firms table structure
 
+ALTER TABLE attorney_users
+ADD COLUMN IF NOT EXISTS firm_name TEXT,
+ADD COLUMN IF NOT EXISTS full_name TEXT,
+ADD COLUMN IF NOT EXISTS first_name TEXT,
+ADD COLUMN IF NOT EXISTS last_name TEXT,
+ADD COLUMN IF NOT EXISTS practice_number TEXT,
+ADD COLUMN IF NOT EXISTS phone_number TEXT,
+ADD COLUMN IF NOT EXISTS address TEXT,
+ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active',
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW(),
+ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 -- Insert data from attorney_users into firms table
 -- Handle duplicates gracefully using ON CONFLICT
 INSERT INTO firms (

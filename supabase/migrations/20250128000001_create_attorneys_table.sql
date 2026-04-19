@@ -38,6 +38,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS attorneys_updated_at ON attorneys;
 CREATE TRIGGER attorneys_updated_at
   BEFORE UPDATE ON attorneys
   FOR EACH ROW
@@ -211,6 +212,35 @@ BEGIN
     COMMENT ON TABLE user_preferences IS 'Stores user-specific preferences including favorite attorneys';
     COMMENT ON COLUMN user_preferences.favorite_attorneys IS 'Array of attorney IDs marked as favorites';
   ELSE
+    -- Ensure advocate_id exists for policy compatibility
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+      AND table_name = 'user_preferences'
+      AND column_name = 'advocate_id'
+    ) THEN
+      ALTER TABLE user_preferences ADD COLUMN advocate_id UUID;
+
+      -- Backfill from legacy user_id if present
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = 'user_preferences'
+        AND column_name = 'user_id'
+      ) THEN
+        UPDATE user_preferences
+        SET advocate_id = user_id
+        WHERE advocate_id IS NULL;
+      END IF;
+
+      ALTER TABLE user_preferences
+      ADD CONSTRAINT user_preferences_advocate_id_fkey
+      FOREIGN KEY (advocate_id) REFERENCES advocates(id) ON DELETE CASCADE;
+    END IF;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_preferences_advocate_id
+      ON user_preferences(advocate_id);
+
     -- If table exists but column doesn't, add it
     IF NOT EXISTS (
       SELECT 1 FROM information_schema.columns 

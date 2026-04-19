@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS logged_services (
   quantity NUMERIC(10,2) DEFAULT 1 CHECK (quantity > 0),
   amount NUMERIC(15,2) NOT NULL CHECK (amount >= 0),
   is_estimate BOOLEAN DEFAULT false,
-  pro_forma_id UUID REFERENCES pro_forma_requests(id) ON DELETE SET NULL,
+  pro_forma_id UUID REFERENCES proforma_requests(id) ON DELETE SET NULL,
   invoice_id UUID REFERENCES invoices(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -38,6 +38,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS logged_services_updated_at ON logged_services;
 CREATE TRIGGER logged_services_updated_at
   BEFORE UPDATE ON logged_services
   FOR EACH ROW
@@ -52,6 +53,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS logged_services_calculate_amount ON logged_services;
 CREATE TRIGGER logged_services_calculate_amount
   BEFORE INSERT OR UPDATE ON logged_services
   FOR EACH ROW
@@ -62,6 +64,11 @@ ALTER TABLE logged_services ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for logged_services
 -- Advocates can view their own logged services
+DROP POLICY IF EXISTS "Advocates can view own logged services" ON logged_services;
+DROP POLICY IF EXISTS "Advocates can insert own logged services" ON logged_services;
+DROP POLICY IF EXISTS "Advocates can update own uninvoiced logged services" ON logged_services;
+DROP POLICY IF EXISTS "Advocates can delete own uninvoiced logged services" ON logged_services;
+
 CREATE POLICY "Advocates can view own logged services"
   ON logged_services
   FOR SELECT

@@ -26,9 +26,12 @@ CREATE TABLE IF NOT EXISTS payment_disputes (
     deleted_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_payment_disputes_invoice ON payment_disputes(invoice_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_payment_disputes_advocate ON payment_disputes(advocate_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_payment_disputes_status ON payment_disputes(status) WHERE deleted_at IS NULL;
+ALTER TABLE payment_disputes
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_payment_disputes_invoice ON payment_disputes(invoice_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_payment_disputes_advocate ON payment_disputes(advocate_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_payment_disputes_status ON payment_disputes(status) WHERE deleted_at IS NULL;
 
 COMMENT ON TABLE payment_disputes IS 'Track payment disputes and their resolutions';
 COMMENT ON COLUMN payment_disputes.dispute_type IS 'Type: amount_incorrect, work_not_done, quality_issue, billing_error, other';
@@ -59,10 +62,13 @@ CREATE TABLE IF NOT EXISTS credit_notes (
     deleted_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_credit_notes_invoice ON credit_notes(invoice_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_credit_notes_dispute ON credit_notes(dispute_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_credit_notes_advocate ON credit_notes(advocate_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_credit_notes_number ON credit_notes(credit_note_number) WHERE deleted_at IS NULL;
+ALTER TABLE credit_notes
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_credit_notes_invoice ON credit_notes(invoice_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_credit_notes_dispute ON credit_notes(dispute_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_credit_notes_advocate ON credit_notes(advocate_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_credit_notes_number ON credit_notes(credit_note_number) WHERE deleted_at IS NULL;
 
 COMMENT ON TABLE credit_notes IS 'Credit notes issued for invoice adjustments';
 
@@ -86,9 +92,15 @@ CREATE TABLE IF NOT EXISTS payments (
     deleted_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_payments_invoice ON payments(invoice_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_payments_advocate ON payments(advocate_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_payments_date ON payments(payment_date) WHERE deleted_at IS NULL;
+ALTER TABLE payments
+    ADD COLUMN IF NOT EXISTS invoice_id UUID,
+    ADD COLUMN IF NOT EXISTS advocate_id UUID,
+    ADD COLUMN IF NOT EXISTS payment_date DATE,
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_payments_advocate ON payments(advocate_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(payment_date) WHERE deleted_at IS NULL;
 
 COMMENT ON TABLE payments IS 'Detailed payment tracking for invoices';
 
@@ -96,6 +108,16 @@ COMMENT ON TABLE payments IS 'Detailed payment tracking for invoices';
 ALTER TABLE payment_disputes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE credit_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Advocates can view their own payment disputes" ON payment_disputes;
+DROP POLICY IF EXISTS "Advocates can create payment disputes" ON payment_disputes;
+DROP POLICY IF EXISTS "Advocates can update their own payment disputes" ON payment_disputes;
+DROP POLICY IF EXISTS "Advocates can view their own credit notes" ON credit_notes;
+DROP POLICY IF EXISTS "Advocates can create credit notes" ON credit_notes;
+DROP POLICY IF EXISTS "Advocates can update their own credit notes" ON credit_notes;
+DROP POLICY IF EXISTS "Advocates can view their own payments" ON payments;
+DROP POLICY IF EXISTS "Advocates can create payments" ON payments;
+DROP POLICY IF EXISTS "Advocates can update their own payments" ON payments;
 
 CREATE POLICY "Advocates can view their own payment disputes"
     ON payment_disputes FOR SELECT
@@ -134,16 +156,19 @@ CREATE POLICY "Advocates can update their own payments"
     USING (advocate_id = auth.uid());
 
 -- Triggers
+DROP TRIGGER IF EXISTS update_payment_disputes_updated_at ON payment_disputes;
 CREATE TRIGGER update_payment_disputes_updated_at
     BEFORE UPDATE ON payment_disputes
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_credit_notes_updated_at ON credit_notes;
 CREATE TRIGGER update_credit_notes_updated_at
     BEFORE UPDATE ON credit_notes
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_payments_updated_at ON payments;
 CREATE TRIGGER update_payments_updated_at
     BEFORE UPDATE ON payments
     FOR EACH ROW
@@ -185,6 +210,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS set_credit_note_number_trigger ON credit_notes;
 CREATE TRIGGER set_credit_note_number_trigger
     BEFORE INSERT ON credit_notes
     FOR EACH ROW

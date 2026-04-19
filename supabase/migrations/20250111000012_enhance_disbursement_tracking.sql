@@ -54,6 +54,13 @@ ADD COLUMN IF NOT EXISTS markup_amount DECIMAL(12,2) DEFAULT 0;
 ALTER TABLE expenses 
 ADD COLUMN IF NOT EXISTS client_charge_amount DECIMAL(12,2);
 
+ALTER TABLE expenses
+ADD COLUMN IF NOT EXISTS billable BOOLEAN DEFAULT true,
+ADD COLUMN IF NOT EXISTS billed BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS date DATE,
+ADD COLUMN IF NOT EXISTS category TEXT,
+ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 -- Add indexes for new fields
 CREATE INDEX IF NOT EXISTS idx_expenses_disbursement_type ON expenses(disbursement_type);
 CREATE INDEX IF NOT EXISTS idx_expenses_payment_date ON expenses(payment_date);
@@ -92,6 +99,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS calculate_expense_client_charge_trigger ON expenses;
 CREATE TRIGGER calculate_expense_client_charge_trigger
   BEFORE INSERT OR UPDATE ON expenses
   FOR EACH ROW
@@ -238,11 +246,15 @@ CREATE TABLE IF NOT EXISTS disbursement_approvals (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_disbursement_approvals_expense ON disbursement_approvals(expense_id);
-CREATE INDEX idx_disbursement_approvals_matter ON disbursement_approvals(matter_id);
-CREATE INDEX idx_disbursement_approvals_status ON disbursement_approvals(status);
+CREATE INDEX IF NOT EXISTS idx_disbursement_approvals_expense ON disbursement_approvals(expense_id);
+CREATE INDEX IF NOT EXISTS idx_disbursement_approvals_matter ON disbursement_approvals(matter_id);
+CREATE INDEX IF NOT EXISTS idx_disbursement_approvals_status ON disbursement_approvals(status);
 
 ALTER TABLE disbursement_approvals ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own disbursement approvals" ON disbursement_approvals;
+DROP POLICY IF EXISTS "Users can create disbursement approvals" ON disbursement_approvals;
+DROP POLICY IF EXISTS "Users can update their own disbursement approvals" ON disbursement_approvals;
 
 CREATE POLICY "Users can view their own disbursement approvals"
   ON disbursement_approvals FOR SELECT
@@ -256,6 +268,7 @@ CREATE POLICY "Users can update their own disbursement approvals"
   ON disbursement_approvals FOR UPDATE
   USING (advocate_id = auth.uid() OR approved_by = auth.uid());
 
+DROP TRIGGER IF EXISTS update_disbursement_approvals_updated_at ON disbursement_approvals;
 CREATE TRIGGER update_disbursement_approvals_updated_at
   BEFORE UPDATE ON disbursement_approvals
   FOR EACH ROW

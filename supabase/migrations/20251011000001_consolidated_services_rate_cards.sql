@@ -96,6 +96,29 @@ CREATE TABLE IF NOT EXISTS rate_cards (
   )
 );
 
+ALTER TABLE rate_cards
+ADD COLUMN IF NOT EXISTS service_name TEXT,
+ADD COLUMN IF NOT EXISTS service_description TEXT,
+ADD COLUMN IF NOT EXISTS service_category rate_card_category,
+ADD COLUMN IF NOT EXISTS matter_type TEXT,
+ADD COLUMN IF NOT EXISTS pricing_type pricing_type DEFAULT 'hourly',
+ADD COLUMN IF NOT EXISTS hourly_rate DECIMAL(10,2),
+ADD COLUMN IF NOT EXISTS fixed_fee DECIMAL(10,2),
+ADD COLUMN IF NOT EXISTS minimum_fee DECIMAL(10,2),
+ADD COLUMN IF NOT EXISTS maximum_fee DECIMAL(10,2),
+ADD COLUMN IF NOT EXISTS estimated_hours_min DECIMAL(5,2),
+ADD COLUMN IF NOT EXISTS estimated_hours_max DECIMAL(5,2),
+ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true,
+ADD COLUMN IF NOT EXISTS requires_approval BOOLEAN DEFAULT false;
+
+UPDATE rate_cards
+SET
+  service_name = COALESCE(service_name, name),
+  service_description = COALESCE(service_description, description)
+WHERE service_name IS NULL
+   OR service_description IS NULL;
+
 CREATE TABLE IF NOT EXISTS standard_service_templates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   

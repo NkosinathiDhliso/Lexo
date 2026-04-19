@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const isStorybook = Boolean(process.env.STORYBOOK);
 
   return {
+    envPrefix: ['VITE_', 'SUPABASE_'],
     plugins: isStorybook ? [] : [react()],
     resolve: {
       alias: {
