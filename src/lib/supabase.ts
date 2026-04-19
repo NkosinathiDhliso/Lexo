@@ -60,6 +60,29 @@ const isValidHttpUrl = (value: string) => {
 
 const looksLikeJwt = (value: string) => value.startsWith('eyJ') && value.split('.').length === 3;
 
+const deriveSupabaseUrlFromAnonKey = (anonKey: string) => {
+  if (!looksLikeJwt(anonKey)) return undefined;
+
+  const parts = anonKey.split('.');
+  if (parts.length < 2) return undefined;
+
+  try {
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+    const decoded = atob(padded);
+    const payload = JSON.parse(decoded) as { ref?: string };
+
+    if (payload.ref && /^[a-z0-9-]{20}$/i.test(payload.ref)) {
+      return `https://${payload.ref}.supabase.co`;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+};
+
 let supabaseUrl = pickFirstNonEmpty(import.meta.env.VITE_SUPABASE_URL, import.meta.env.SUPABASE_URL);
 let supabaseAnonKey = pickFirstNonEmpty(
   import.meta.env.VITE_SUPABASE_ANON_KEY,
@@ -84,6 +107,16 @@ if (supabaseUrl && supabaseAnonKey && looksLikeJwt(supabaseUrl) && isValidHttpUr
     'Supabase environment variables appear to be swapped. ' +
       'Using VITE/SUPABASE_ANON_KEY as URL and VITE/SUPABASE_URL as anon key.'
   );
+}
+
+if (supabaseAnonKey && (!supabaseUrl || isPlaceholderValue(supabaseUrl) || !isValidHttpUrl(supabaseUrl))) {
+  const derivedUrl = deriveSupabaseUrlFromAnonKey(supabaseAnonKey);
+  if (derivedUrl) {
+    supabaseUrl = derivedUrl;
+    console.warn(
+      'Supabase URL was missing or invalid. Derived URL from anon key payload and continuing with that value.'
+    );
+  }
 }
 
 if (!supabaseUrl || !supabaseAnonKey) {
