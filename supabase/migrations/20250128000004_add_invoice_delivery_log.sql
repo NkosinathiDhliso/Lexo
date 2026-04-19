@@ -16,12 +16,15 @@ CREATE TABLE IF NOT EXISTS invoice_delivery_log (
   CONSTRAINT valid_delivery_method CHECK (delivery_method IN ('email', 'portal', 'download', 'manual'))
 );
 
+ALTER TABLE attorneys
+ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+
 -- 2. Create indexes
-CREATE INDEX idx_invoice_delivery_invoice ON invoice_delivery_log(invoice_id);
-CREATE INDEX idx_invoice_delivery_delivered_to ON invoice_delivery_log(delivered_to);
-CREATE INDEX idx_invoice_delivery_method ON invoice_delivery_log(delivery_method);
-CREATE INDEX idx_invoice_delivery_status ON invoice_delivery_log(delivery_status);
-CREATE INDEX idx_invoice_delivery_date ON invoice_delivery_log(delivered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_invoice_delivery_invoice ON invoice_delivery_log(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_delivery_delivered_to ON invoice_delivery_log(delivered_to);
+CREATE INDEX IF NOT EXISTS idx_invoice_delivery_method ON invoice_delivery_log(delivery_method);
+CREATE INDEX IF NOT EXISTS idx_invoice_delivery_status ON invoice_delivery_log(delivery_status);
+CREATE INDEX IF NOT EXISTS idx_invoice_delivery_date ON invoice_delivery_log(delivered_at DESC);
 
 -- 3. Create view for latest delivery status per invoice
 CREATE OR REPLACE VIEW invoice_latest_delivery AS
@@ -37,6 +40,10 @@ ORDER BY invoice_id, delivered_at DESC;
 
 -- 4. Create RLS policies
 ALTER TABLE invoice_delivery_log ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS invoice_delivery_advocate_read ON invoice_delivery_log;
+DROP POLICY IF EXISTS invoice_delivery_advocate_create ON invoice_delivery_log;
+DROP POLICY IF EXISTS invoice_delivery_attorney_read ON invoice_delivery_log;
 
 -- Advocates can see delivery logs for their own invoices
 CREATE POLICY invoice_delivery_advocate_read ON invoice_delivery_log

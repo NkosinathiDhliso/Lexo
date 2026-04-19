@@ -35,16 +35,24 @@ CREATE TABLE IF NOT EXISTS brief_fee_templates (
   -- Metadata
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  deleted_at TIMESTAMPTZ,
-  
-  CONSTRAINT unique_template_name UNIQUE (advocate_id, template_name) WHERE deleted_at IS NULL
+  deleted_at TIMESTAMPTZ
 );
 
 -- 2. Create indexes for efficient queries
-CREATE INDEX idx_brief_fee_templates_advocate ON brief_fee_templates(advocate_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_brief_fee_templates_case_type ON brief_fee_templates(case_type) WHERE deleted_at IS NULL;
-CREATE INDEX idx_brief_fee_templates_default ON brief_fee_templates(advocate_id, is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
-CREATE INDEX idx_brief_fee_templates_used ON brief_fee_templates(times_used DESC) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_brief_fee_templates_unique_active_name
+  ON brief_fee_templates(advocate_id, template_name)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_brief_fee_templates_advocate ON brief_fee_templates(advocate_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_brief_fee_templates_case_type ON brief_fee_templates(case_type) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_brief_fee_templates_default ON brief_fee_templates(advocate_id, is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_brief_fee_templates_used ON brief_fee_templates(times_used DESC) WHERE deleted_at IS NULL;
+
+ALTER TABLE matters
+ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES brief_fee_templates(id) ON DELETE SET NULL;
+
+ALTER TABLE matters
+ADD COLUMN IF NOT EXISTS estimated_value DECIMAL(12,2);
 
 -- 3. Create view for template usage statistics
 CREATE OR REPLACE VIEW brief_fee_template_stats AS
@@ -82,6 +90,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 5. Create trigger on matters table
+DROP TRIGGER IF EXISTS trg_increment_template_usage ON matters;
 CREATE TRIGGER trg_increment_template_usage
   AFTER INSERT ON matters
   FOR EACH ROW
@@ -168,6 +177,11 @@ CREATE INDEX IF NOT EXISTS idx_matters_template ON matters(template_id) WHERE de
 
 -- 9. Create RLS policies for brief_fee_templates
 ALTER TABLE brief_fee_templates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS brief_fee_templates_advocate_read ON brief_fee_templates;
+DROP POLICY IF EXISTS brief_fee_templates_advocate_create ON brief_fee_templates;
+DROP POLICY IF EXISTS brief_fee_templates_advocate_update ON brief_fee_templates;
+DROP POLICY IF EXISTS brief_fee_templates_advocate_delete ON brief_fee_templates;
 
 -- Advocates can see only their own templates
 CREATE POLICY brief_fee_templates_advocate_read ON brief_fee_templates

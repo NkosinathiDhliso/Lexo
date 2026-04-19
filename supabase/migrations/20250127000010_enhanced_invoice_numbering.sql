@@ -1,6 +1,35 @@
 -- Enhanced Invoice Numbering System with Concurrency Handling
 -- Ensures SARS compliance and prevents race conditions
 
+CREATE TABLE IF NOT EXISTS invoice_settings (
+  advocate_id UUID PRIMARY KEY REFERENCES advocates(id) ON DELETE CASCADE,
+  invoice_number_format TEXT NOT NULL DEFAULT 'INV-YYYY-NNN',
+  credit_note_format TEXT NOT NULL DEFAULT 'CN-YYYY-NNN',
+  current_sequence INTEGER NOT NULL DEFAULT 0 CHECK (current_sequence >= 0),
+  credit_note_sequence INTEGER NOT NULL DEFAULT 0 CHECK (credit_note_sequence >= 0),
+  last_sequence_year INTEGER NOT NULL DEFAULT CAST(EXTRACT(YEAR FROM CURRENT_DATE) AS INTEGER),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS invoice_numbering_audit (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  advocate_id UUID NOT NULL REFERENCES advocates(id) ON DELETE CASCADE,
+  number_issued TEXT NOT NULL,
+  number_type TEXT NOT NULL DEFAULT 'invoice' CHECK (number_type IN ('invoice', 'credit_note')),
+  issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sequence_number INTEGER,
+  year INTEGER,
+  voided_at TIMESTAMPTZ,
+  void_reason TEXT,
+  related_credit_note TEXT
+);
+
+-- Ensure one settings row per advocate
+INSERT INTO invoice_settings (advocate_id)
+SELECT id FROM advocates
+ON CONFLICT (advocate_id) DO NOTHING;
+
 -- ============================================================================
 -- FUNCTION: Get Next Invoice Number (Atomic & Concurrent-Safe)
 -- ============================================================================
@@ -23,6 +52,11 @@ DECLARE
 BEGIN
   -- Get current year
   v_year := EXTRACT(YEAR FROM CURRENT_DATE);
+
+  -- Ensure settings row exists for this advocate
+  INSERT INTO invoice_settings (advocate_id)
+  VALUES (p_advocate_id)
+  ON CONFLICT (advocate_id) DO NOTHING;
   
   -- Get format from settings
   SELECT 
@@ -304,25 +338,27 @@ BEGIN
   AND advocate_id = p_advocate_id;
   
   -- Log the void action
-  INSERT INTO audit_log (
-    advocate_id,
-    action,
-    entity_type,
-    entity_id,
-    details,
-    created_at
-  ) VALUES (
-    p_advocate_id,
-    'invoice_voided',
-    'invoice',
-    p_invoice_number,
-    jsonb_build_object(
-      'invoice_number', p_invoice_number,
-      'void_reason', p_void_reason,
-      'credit_note', p_credit_note_number
-    ),
-    NOW()
-  );
+  IF to_regclass('public.audit_log') IS NOT NULL THEN
+    INSERT INTO audit_log (
+      advocate_id,
+      action,
+      entity_type,
+      entity_id,
+      details,
+      created_at
+    ) VALUES (
+      p_advocate_id,
+      'invoice_voided',
+      'invoice',
+      p_invoice_number,
+      jsonb_build_object(
+        'invoice_number', p_invoice_number,
+        'void_reason', p_void_reason,
+        'credit_note', p_credit_note_number
+      ),
+      NOW()
+    );
+  END IF;
 END;
 $$;
 

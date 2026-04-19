@@ -7,7 +7,15 @@ ALTER TABLE matters
 ADD COLUMN IF NOT EXISTS is_urgent BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS urgency_reason TEXT,
 ADD COLUMN IF NOT EXISTS urgent_created_at TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS urgent_deadline TIMESTAMPTZ;
+ADD COLUMN IF NOT EXISTS urgent_deadline TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS instructing_attorney TEXT,
+ADD COLUMN IF NOT EXISTS instructing_firm TEXT;
+
+ALTER TABLE advocates
+ADD COLUMN IF NOT EXISTS first_name TEXT,
+ADD COLUMN IF NOT EXISTS last_name TEXT,
+ADD COLUMN IF NOT EXISTS full_name TEXT;
 
 -- Add indexes for urgent matter filtering
 CREATE INDEX IF NOT EXISTS idx_matters_urgent ON matters(is_urgent) WHERE is_urgent = TRUE;
@@ -60,7 +68,11 @@ SELECT
   m.urgent_created_at,
   m.urgent_deadline,
   m.created_at,
-  a.first_name || ' ' || a.last_name AS advocate_name,
+  COALESCE(
+    NULLIF(TRIM(COALESCE(a.first_name, '') || ' ' || COALESCE(a.last_name, '')), ''),
+    a.full_name,
+    a.email
+  ) AS advocate_name,
   EXTRACT(EPOCH FROM (NOW() - m.urgent_created_at)) / 3600 AS hours_since_urgent,
   CASE 
     WHEN m.urgent_deadline IS NOT NULL THEN
@@ -70,7 +82,7 @@ SELECT
 FROM matters m
 JOIN advocates a ON m.advocate_id = a.id
 WHERE m.is_urgent = TRUE
-  AND m.status != 'archived'
+  AND m.archived_at IS NULL
 ORDER BY m.urgent_created_at DESC;
 
 COMMENT ON VIEW urgent_matters_view IS 'Dashboard view for all active urgent matters with time tracking';

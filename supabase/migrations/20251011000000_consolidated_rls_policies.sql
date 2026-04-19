@@ -22,6 +22,7 @@ DROP POLICY IF EXISTS "advocates_update_policy" ON advocates;
 DROP POLICY IF EXISTS "Users can view their own matters" ON matters;
 DROP POLICY IF EXISTS "Users can create matters" ON matters;
 DROP POLICY IF EXISTS "Users can update their own matters" ON matters;
+DROP POLICY IF EXISTS "matters_delete_policy" ON matters;
 DROP POLICY IF EXISTS "matters_select_policy" ON matters;
 DROP POLICY IF EXISTS "matters_insert_policy" ON matters;
 DROP POLICY IF EXISTS "matters_update_policy" ON matters;

@@ -110,6 +110,11 @@ BEGIN
     ALTER TABLE user_profiles ADD COLUMN initials TEXT;
     RAISE NOTICE '✓ Added initials column';
   END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'user_profiles' AND column_name = 'full_name') THEN
+    ALTER TABLE user_profiles ADD COLUMN full_name TEXT;
+    RAISE NOTICE '✓ Added full_name column';
+  END IF;
   
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'user_profiles' AND column_name = 'email') THEN
     ALTER TABLE user_profiles ADD COLUMN email TEXT;
@@ -130,10 +135,10 @@ CREATE OR REPLACE VIEW advocates_view AS
 SELECT 
   user_id as id,
   email,
-  full_name,
+  COALESCE(full_name, email) as full_name,
   initials,
   practice_number,
-  NULL::bar_association as bar,  -- Will be added when we know the column exists
+  NULL::text as bar,
   year_admitted,
   hourly_rate,
   phone as phone_number,

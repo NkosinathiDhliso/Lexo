@@ -300,6 +300,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- PART 5: Create disbursement summary view
 -- ============================================================================
 
+DROP VIEW IF EXISTS disbursement_summary;
+
 CREATE OR REPLACE VIEW disbursement_summary AS
 SELECT 
   m.id as matter_id,

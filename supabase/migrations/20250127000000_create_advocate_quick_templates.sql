@@ -29,13 +29,13 @@ CREATE TABLE IF NOT EXISTS advocate_quick_templates (
 );
 
 -- Create indexes for performance
-CREATE INDEX idx_advocate_templates_advocate 
+CREATE INDEX IF NOT EXISTS idx_advocate_templates_advocate 
   ON advocate_quick_templates(advocate_id);
 
-CREATE INDEX idx_advocate_templates_category 
+CREATE INDEX IF NOT EXISTS idx_advocate_templates_category 
   ON advocate_quick_templates(advocate_id, category);
 
-CREATE INDEX idx_advocate_templates_usage 
+CREATE INDEX IF NOT EXISTS idx_advocate_templates_usage 
   ON advocate_quick_templates(advocate_id, category, usage_count DESC);
 
 -- Add updated_at trigger
@@ -47,6 +47,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS advocate_quick_templates_updated_at ON advocate_quick_templates;
 CREATE TRIGGER advocate_quick_templates_updated_at
   BEFORE UPDATE ON advocate_quick_templates
   FOR EACH ROW
@@ -58,6 +59,11 @@ CREATE TRIGGER advocate_quick_templates_updated_at
 
 -- Enable RLS
 ALTER TABLE advocate_quick_templates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Advocates can view own templates" ON advocate_quick_templates;
+DROP POLICY IF EXISTS "Advocates can insert own templates" ON advocate_quick_templates;
+DROP POLICY IF EXISTS "Advocates can update own templates" ON advocate_quick_templates;
+DROP POLICY IF EXISTS "Advocates can delete own templates" ON advocate_quick_templates;
 
 -- Policy: Advocates can view their own templates and system defaults
 CREATE POLICY "Advocates can view own templates"
@@ -152,7 +158,7 @@ BEGIN
     ALTER TABLE matters ADD COLUMN practice_area TEXT;
     
     -- Add index for filtering by practice area
-    CREATE INDEX idx_matters_practice_area ON matters(practice_area);
+    CREATE INDEX IF NOT EXISTS idx_matters_practice_area ON matters(practice_area);
     
     COMMENT ON COLUMN matters.practice_area IS 'Practice area categorization for the matter (e.g., Labour Law, Commercial, Tax)';
   END IF;
@@ -177,7 +183,7 @@ BEGIN
     ));
     
     -- Add index for analytics
-    CREATE INDEX idx_matters_creation_source ON matters(creation_source);
+    CREATE INDEX IF NOT EXISTS idx_matters_creation_source ON matters(creation_source);
     
     COMMENT ON COLUMN matters.creation_source IS 'Source of matter creation for analytics and tracking';
   END IF;
@@ -196,7 +202,7 @@ BEGIN
     ALTER TABLE matters ADD COLUMN is_quick_create BOOLEAN DEFAULT false;
     
     -- Add index for filtering quick-created matters
-    CREATE INDEX idx_matters_quick_create ON matters(is_quick_create) WHERE is_quick_create = true;
+    CREATE INDEX IF NOT EXISTS idx_matters_quick_create ON matters(is_quick_create) WHERE is_quick_create = true;
     
     COMMENT ON COLUMN matters.is_quick_create IS 'Flag indicating matter was created via Quick Brief Capture';
   END IF;
@@ -220,7 +226,17 @@ COMMENT ON COLUMN advocate_quick_templates.is_custom IS 'True for advocate-creat
 
 -- Grant authenticated users access to the table
 GRANT SELECT, INSERT, UPDATE, DELETE ON advocate_quick_templates TO authenticated;
-GRANT USAGE ON SEQUENCE advocate_quick_templates_id_seq TO authenticated;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_class
+    WHERE relkind = 'S'
+      AND relname = 'advocate_quick_templates_id_seq'
+  ) THEN
+    EXECUTE 'GRANT USAGE ON SEQUENCE advocate_quick_templates_id_seq TO authenticated';
+  END IF;
+END $$;
 
 -- ============================================================================
 -- Migration complete

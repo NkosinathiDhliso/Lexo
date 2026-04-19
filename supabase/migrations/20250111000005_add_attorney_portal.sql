@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS attorney_users (
     deleted_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_attorney_users_email ON attorney_users(email) WHERE deleted_at IS NULL;
-CREATE INDEX idx_attorney_users_status ON attorney_users(status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_attorney_users_email ON attorney_users(email) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_attorney_users_status ON attorney_users(status) WHERE deleted_at IS NULL;
 
 COMMENT ON TABLE attorney_users IS 'Instructing attorneys who access the attorney portal';
 
@@ -56,9 +56,9 @@ CREATE TABLE IF NOT EXISTS attorney_matter_access (
     UNIQUE(attorney_user_id, matter_id)
 );
 
-CREATE INDEX idx_attorney_matter_access_attorney ON attorney_matter_access(attorney_user_id) WHERE revoked_at IS NULL;
-CREATE INDEX idx_attorney_matter_access_matter ON attorney_matter_access(matter_id) WHERE revoked_at IS NULL;
-CREATE INDEX idx_attorney_matter_access_level ON attorney_matter_access(access_level) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_attorney_matter_access_attorney ON attorney_matter_access(attorney_user_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_attorney_matter_access_matter ON attorney_matter_access(matter_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_attorney_matter_access_level ON attorney_matter_access(access_level) WHERE revoked_at IS NULL;
 
 COMMENT ON TABLE attorney_matter_access IS 'Controls which attorneys can access which matters';
 COMMENT ON COLUMN attorney_matter_access.access_level IS 'Access level: view (read-only), approve (can approve pro formas), admin (full access)';
@@ -109,10 +109,10 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_notifications_recipient ON notifications(recipient_type, recipient_id);
-CREATE INDEX idx_notifications_type ON notifications(notification_type);
-CREATE INDEX idx_notifications_unread ON notifications(recipient_id) WHERE read_at IS NULL;
-CREATE INDEX idx_notifications_created ON notifications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_type, recipient_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(notification_type);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(recipient_id) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
 
 COMMENT ON TABLE notifications IS 'System notifications for advocates and attorneys';
 
@@ -137,16 +137,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_audit_log_user ON audit_log(user_type, user_id);
-CREATE INDEX idx_audit_log_entity ON audit_log(entity_type, entity_id);
-CREATE INDEX idx_audit_log_action ON audit_log(action);
-CREATE INDEX idx_audit_log_created ON audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_type, user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
 
 COMMENT ON TABLE audit_log IS 'Complete audit trail of all user actions';
 
 -- Extend matters table
 ALTER TABLE matters
 ADD COLUMN IF NOT EXISTS instructing_attorney_user_id UUID REFERENCES attorney_users(id) ON DELETE SET NULL;
+
+ALTER TABLE proforma_requests
+ADD COLUMN IF NOT EXISTS matter_id UUID REFERENCES matters(id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_matters_attorney_user ON matters(instructing_attorney_user_id) WHERE deleted_at IS NULL;
 
@@ -167,6 +170,9 @@ COMMENT ON COLUMN retainer_agreements.can_fund_multiple_matters IS 'Whether this
 -- Attorney Users
 ALTER TABLE attorney_users ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Attorneys can view their own profile" ON attorney_users;
+DROP POLICY IF EXISTS "Attorneys can update their own profile" ON attorney_users;
+
 CREATE POLICY "Attorneys can view their own profile"
     ON attorney_users FOR SELECT
     USING (id = auth.uid());
@@ -178,6 +184,9 @@ CREATE POLICY "Attorneys can update their own profile"
 
 -- Attorney Matter Access
 ALTER TABLE attorney_matter_access ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Attorneys can view their own access" ON attorney_matter_access;
+DROP POLICY IF EXISTS "Advocates can manage attorney access" ON attorney_matter_access;
 
 CREATE POLICY "Attorneys can view their own access"
     ON attorney_matter_access FOR SELECT
@@ -193,6 +202,7 @@ CREATE POLICY "Advocates can manage attorney access"
     );
 
 -- Matters (Attorney Access)
+DROP POLICY IF EXISTS "Attorneys can view matters they have access to" ON matters;
 CREATE POLICY "Attorneys can view matters they have access to"
     ON matters FOR SELECT
     USING (
@@ -205,6 +215,7 @@ CREATE POLICY "Attorneys can view matters they have access to"
     );
 
 -- Invoices (Attorney Access)
+DROP POLICY IF EXISTS "Attorneys can view invoices for their matters" ON invoices;
 CREATE POLICY "Attorneys can view invoices for their matters"
     ON invoices FOR SELECT
     USING (
@@ -217,6 +228,7 @@ CREATE POLICY "Attorneys can view invoices for their matters"
     );
 
 -- Pro Forma Requests (Attorney Access)
+DROP POLICY IF EXISTS "Attorneys can view pro formas for their matters" ON proforma_requests;
 CREATE POLICY "Attorneys can view pro formas for their matters"
     ON proforma_requests FOR SELECT
     USING (
@@ -229,6 +241,7 @@ CREATE POLICY "Attorneys can view pro formas for their matters"
         )
     );
 
+DROP POLICY IF EXISTS "Attorneys can respond to pro formas" ON proforma_requests;
 CREATE POLICY "Attorneys can respond to pro formas"
     ON proforma_requests FOR UPDATE
     USING (
@@ -244,6 +257,10 @@ CREATE POLICY "Attorneys can respond to pro formas"
 
 -- Notifications
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own notifications" ON notifications;
+DROP POLICY IF EXISTS "Users can update their own notifications" ON notifications;
+DROP POLICY IF EXISTS "System can create notifications" ON notifications;
 
 CREATE POLICY "Users can view their own notifications"
     ON notifications FOR SELECT
@@ -266,6 +283,9 @@ CREATE POLICY "System can create notifications"
 -- Audit Log
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view their own audit log" ON audit_log;
+DROP POLICY IF EXISTS "System can create audit log entries" ON audit_log;
+
 CREATE POLICY "Users can view their own audit log"
     ON audit_log FOR SELECT
     USING (
@@ -278,11 +298,13 @@ CREATE POLICY "System can create audit log entries"
     WITH CHECK (true);
 
 -- Triggers
+DROP TRIGGER IF EXISTS update_attorney_users_updated_at ON attorney_users;
 CREATE TRIGGER update_attorney_users_updated_at
     BEFORE UPDATE ON attorney_users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_attorney_matter_access_updated_at ON attorney_matter_access;
 CREATE TRIGGER update_attorney_matter_access_updated_at
     BEFORE UPDATE ON attorney_matter_access
     FOR EACH ROW
@@ -311,6 +333,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS grant_attorney_access_trigger ON matters;
 CREATE TRIGGER grant_attorney_access_trigger
     AFTER INSERT ON matters
     FOR EACH ROW
@@ -357,6 +380,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS notify_attorney_on_proforma_request_trigger ON proforma_requests;
 CREATE TRIGGER notify_attorney_on_proforma_request_trigger
     AFTER UPDATE ON proforma_requests
     FOR EACH ROW
@@ -402,6 +426,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS notify_attorney_on_invoice_issued_trigger ON invoices;
 CREATE TRIGGER notify_attorney_on_invoice_issued_trigger
     AFTER UPDATE ON invoices
     FOR EACH ROW

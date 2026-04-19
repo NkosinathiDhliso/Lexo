@@ -4,31 +4,43 @@
 -- ============================================================================
 
 -- Brief Status Enum
-CREATE TYPE brief_status AS ENUM (
-  'pending',
-  'active',
-  'completed',
-  'cancelled'
-);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'brief_status') THEN
+    CREATE TYPE brief_status AS ENUM (
+      'pending',
+      'active',
+      'completed',
+      'cancelled'
+    );
+  END IF;
+END
+$$;
 
 -- Brief Type Enum (South African advocate practice)
-CREATE TYPE brief_type AS ENUM (
-  'opinion',
-  'drafting',
-  'consultation',
-  'trial',
-  'appeal',
-  'application',
-  'motion',
-  'arbitration',
-  'mediation',
-  'other'
-);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'brief_type') THEN
+    CREATE TYPE brief_type AS ENUM (
+      'opinion',
+      'drafting',
+      'consultation',
+      'trial',
+      'appeal',
+      'application',
+      'motion',
+      'arbitration',
+      'mediation',
+      'other'
+    );
+  END IF;
+END
+$$;
 
 -- Briefs Table
 -- Represents individual briefs within a matter
 -- A matter (case) can have multiple briefs over time
-CREATE TABLE briefs (
+CREATE TABLE IF NOT EXISTS briefs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   matter_id UUID NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
   advocate_id UUID NOT NULL REFERENCES advocates(id) ON DELETE CASCADE,
@@ -72,28 +84,28 @@ CREATE TABLE briefs (
 
 -- Add brief_id to time_entries (optional - allows tracking time to specific briefs)
 ALTER TABLE time_entries 
-ADD COLUMN brief_id UUID REFERENCES briefs(id) ON DELETE SET NULL;
+ADD COLUMN IF NOT EXISTS brief_id UUID REFERENCES briefs(id) ON DELETE SET NULL;
 
 -- Add brief_id to expenses (optional - allows tracking expenses to specific briefs)
 ALTER TABLE expenses 
-ADD COLUMN brief_id UUID REFERENCES briefs(id) ON DELETE SET NULL;
+ADD COLUMN IF NOT EXISTS brief_id UUID REFERENCES briefs(id) ON DELETE SET NULL;
 
 -- Add brief_id to invoices (optional - allows invoicing specific briefs)
 ALTER TABLE invoices 
-ADD COLUMN brief_id UUID REFERENCES briefs(id) ON DELETE SET NULL;
+ADD COLUMN IF NOT EXISTS brief_id UUID REFERENCES briefs(id) ON DELETE SET NULL;
 
 -- Indexes for performance
-CREATE INDEX idx_briefs_matter ON briefs(matter_id);
-CREATE INDEX idx_briefs_advocate ON briefs(advocate_id);
-CREATE INDEX idx_briefs_status ON briefs(status);
-CREATE INDEX idx_briefs_brief_number ON briefs(brief_number);
-CREATE INDEX idx_briefs_date_received ON briefs(date_received DESC);
-CREATE INDEX idx_briefs_deadline ON briefs(deadline);
-CREATE INDEX idx_briefs_source_proforma ON briefs(source_proforma_id);
+CREATE INDEX IF NOT EXISTS idx_briefs_matter ON briefs(matter_id);
+CREATE INDEX IF NOT EXISTS idx_briefs_advocate ON briefs(advocate_id);
+CREATE INDEX IF NOT EXISTS idx_briefs_status ON briefs(status);
+CREATE INDEX IF NOT EXISTS idx_briefs_brief_number ON briefs(brief_number);
+CREATE INDEX IF NOT EXISTS idx_briefs_date_received ON briefs(date_received DESC);
+CREATE INDEX IF NOT EXISTS idx_briefs_deadline ON briefs(deadline);
+CREATE INDEX IF NOT EXISTS idx_briefs_source_proforma ON briefs(source_proforma_id);
 
-CREATE INDEX idx_time_entries_brief ON time_entries(brief_id);
-CREATE INDEX idx_expenses_brief ON expenses(brief_id);
-CREATE INDEX idx_invoices_brief ON invoices(brief_id);
+CREATE INDEX IF NOT EXISTS idx_time_entries_brief ON time_entries(brief_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_brief ON expenses(brief_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_brief ON invoices(brief_id);
 
 -- ============================================================================
 -- Functions
@@ -134,6 +146,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS set_brief_number ON briefs;
 CREATE TRIGGER set_brief_number
   BEFORE INSERT ON briefs
   FOR EACH ROW
@@ -163,19 +176,20 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Triggers to update brief WIP
+DROP TRIGGER IF EXISTS update_brief_wip_on_time_entry ON time_entries;
 CREATE TRIGGER update_brief_wip_on_time_entry
   AFTER INSERT OR UPDATE OR DELETE ON time_entries
   FOR EACH ROW
-  WHEN (NEW.brief_id IS NOT NULL OR OLD.brief_id IS NOT NULL)
   EXECUTE FUNCTION update_brief_wip();
 
+DROP TRIGGER IF EXISTS update_brief_wip_on_expense ON expenses;
 CREATE TRIGGER update_brief_wip_on_expense
   AFTER INSERT OR UPDATE OR DELETE ON expenses
   FOR EACH ROW
-  WHEN (NEW.brief_id IS NOT NULL OR OLD.brief_id IS NOT NULL)
   EXECUTE FUNCTION update_brief_wip();
 
 -- Update timestamp trigger
+DROP TRIGGER IF EXISTS update_briefs_updated_at ON briefs;
 CREATE TRIGGER update_briefs_updated_at
   BEFORE UPDATE ON briefs
   FOR EACH ROW
@@ -186,6 +200,11 @@ CREATE TRIGGER update_briefs_updated_at
 -- ============================================================================
 
 ALTER TABLE briefs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own briefs" ON briefs;
+DROP POLICY IF EXISTS "Users can create briefs" ON briefs;
+DROP POLICY IF EXISTS "Users can update their own briefs" ON briefs;
+DROP POLICY IF EXISTS "Users can delete their own briefs" ON briefs;
 
 CREATE POLICY "Users can view their own briefs"
   ON briefs FOR SELECT
