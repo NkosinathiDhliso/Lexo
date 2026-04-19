@@ -6,6 +6,28 @@ ALTER TABLE matters ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT false;
 ALTER TABLE matters ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 ALTER TABLE matters ADD COLUMN IF NOT EXISTS archived_by UUID REFERENCES user_profiles(user_id) ON DELETE SET NULL;
 
+ALTER TABLE matters
+ADD COLUMN IF NOT EXISTS court_case_number TEXT,
+ADD COLUMN IF NOT EXISTS client_email TEXT,
+ADD COLUMN IF NOT EXISTS client_phone TEXT,
+ADD COLUMN IF NOT EXISTS client_address TEXT,
+ADD COLUMN IF NOT EXISTS client_type TEXT,
+ADD COLUMN IF NOT EXISTS instructing_attorney TEXT,
+ADD COLUMN IF NOT EXISTS instructing_attorney_email TEXT,
+ADD COLUMN IF NOT EXISTS instructing_attorney_phone TEXT,
+ADD COLUMN IF NOT EXISTS instructing_firm TEXT,
+ADD COLUMN IF NOT EXISTS instructing_firm_ref TEXT,
+ADD COLUMN IF NOT EXISTS fee_type TEXT,
+ADD COLUMN IF NOT EXISTS estimated_fee DECIMAL,
+ADD COLUMN IF NOT EXISTS fee_cap DECIMAL,
+ADD COLUMN IF NOT EXISTS risk_level TEXT,
+ADD COLUMN IF NOT EXISTS settlement_probability INTEGER,
+ADD COLUMN IF NOT EXISTS expected_completion_date DATE,
+ADD COLUMN IF NOT EXISTS wip_value DECIMAL,
+ADD COLUMN IF NOT EXISTS source_proforma_id UUID,
+ADD COLUMN IF NOT EXISTS is_prepopulated BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS tags TEXT[];
+
 -- Add indexes for performance
 CREATE INDEX IF NOT EXISTS idx_matters_archived ON matters(is_archived);
 CREATE INDEX IF NOT EXISTS idx_matters_archived_at ON matters(archived_at DESC);
@@ -14,6 +36,24 @@ CREATE INDEX IF NOT EXISTS idx_matters_archived_at ON matters(archived_at DESC);
 UPDATE matters SET is_archived = false WHERE is_archived IS NULL;
 
 -- Create comprehensive matter search function
+DROP FUNCTION IF EXISTS search_matters(
+  UUID,
+  TEXT,
+  BOOLEAN,
+  TEXT,
+  TEXT,
+  TEXT[],
+  DATE,
+  DATE,
+  TEXT,
+  DECIMAL,
+  DECIMAL,
+  TEXT,
+  TEXT,
+  INTEGER,
+  INTEGER
+);
+
 CREATE OR REPLACE FUNCTION search_matters(
   p_advocate_id UUID,
   p_search_query TEXT DEFAULT NULL,
@@ -224,6 +264,8 @@ END;
 $$;
 
 -- Create function to get archived matters
+DROP FUNCTION IF EXISTS get_archived_matters(UUID, INTEGER, INTEGER);
+
 CREATE OR REPLACE FUNCTION get_archived_matters(
   p_advocate_id UUID,
   p_limit INTEGER DEFAULT 50,
